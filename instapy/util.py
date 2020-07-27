@@ -1852,6 +1852,8 @@ def is_page_available(browser, logger):
                     "The page isn't available!\t~the link may be broken, "
                     "or the page may have been removed..."
                 )
+                is_page_available.errorCount += 1 # Increase counter if page laod is blocked
+                time.sleep(is_page_available.errorCount * 60 * random.randint(30,36)) # Pause for ~30 minutes per consecutive error
 
             elif "Content Unavailable" in page_title:
                 logger.warning(
@@ -1859,9 +1861,12 @@ def is_page_available(browser, logger):
                 )
 
             return False
-
+        
+    is_page_available.errorCount = 0 # Reset counter on successful page load
     return True
 
+# Initialise page load error counter to 0
+is_page_available.errorCount = 0
 
 @contextmanager
 def smart_run(session, threaded=False):
