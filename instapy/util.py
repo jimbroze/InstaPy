@@ -1855,7 +1855,8 @@ def is_page_available(browser, logger):
                 
                 is_page_available.errorCount += 1 # Increase counter if page load is blocked
                 sleepTime = (pow(2, is_page_available.errorCount) - 1) * 60 * 12
-                logger.info("{} consecutive page load errors. Sleeping for {} minutes.".format(is_page_available.errorCount, sleepTime))
+                sleepTimeMins = round(sleepTime)
+                logger.info("{} consecutive page load errors. Sleeping for {} minutes.".format(is_page_available.errorCount, sleepTimeMins))
                 time.sleep(sleepTime) # Pause for ~12 minutes per consecutive error
                 is_page_available.errorThreshold = datetime.datetime.now() + datetime.timedelta(seconds=max(sleepTime, 30 * 60))
 
