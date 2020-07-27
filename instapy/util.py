@@ -1853,10 +1853,11 @@ def is_page_available(browser, logger):
                     "or the page may have been removed..."
                 )
                 
-                is_page_available.errorCount += 1 # Increase counter if page laod is blocked
-                sleepTime = is_page_available.errorCount * 60 * random.randint(30,36)
+                is_page_available.errorCount += 1 # Increase counter if page load is blocked
+                sleepTime = (pow(2, is_page_available.errorCount) - 1) * 60 * 12
                 logger.info("{} consecutive page load errors. Sleeping for {} minutes.".format(is_page_available.errorCount, sleepTime))
-                time.sleep(sleepTime) # Pause for ~30 minutes per consecutive error
+                time.sleep(sleepTime) # Pause for ~12 minutes per consecutive error
+                is_page_available.errorThreshold = datetime.datetime.now() + datetime.timedelta(seconds=max(sleepTime, 30 * 60))
 
             elif "Content Unavailable" in page_title:
                 logger.warning(
@@ -1864,12 +1865,13 @@ def is_page_available(browser, logger):
                 )
 
             return False
-        
-    is_page_available.errorCount = 0 # Reset counter on successful page load
+    if (is_page_available.errorThreshold < datetime.datetime.now()) or (is_page_available.errorCount > 5):
+        is_page_available.errorCount = 0 # Reset counter on successful page load after waiting period
     return True
 
 # Initialise page load error counter to 0
 is_page_available.errorCount = 0
+is_page_available.errorThreshold = datetime.datetime.now()
 
 @contextmanager
 def smart_run(session, threaded=False):
