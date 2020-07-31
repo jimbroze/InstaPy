@@ -1837,6 +1837,47 @@ def get_username_from_id(browser, user_id, logger):
     return None
 
 
+def night_sleep(logger, sleepHour, startTime=None):
+    if startTime is None:
+        startTime = datetime.datetime.now()
+    dayFinish = startTime.replace(
+        hour=sleepHour, minute=random.randint(0, 9), second=0, microsecond=0
+    )
+    dayStart = startTime.replace(
+        hour=6,
+        minute=random.randint(1, 9),
+        second=random.randint(0, 59),
+        microsecond=0,
+    )
+    if startTime > dayFinish:
+        sleepTime = (
+            (dayStart + datetime.timedelta(days=1)) - datetime.datetime.now()
+        ).total_seconds()
+        logger.info(
+            "Wakeup will be after the end of the day. Will sleep for {} seconds".format(
+                sleepTime
+            )
+        )
+    elif startTime < dayStart:
+        sleepTime = (dayStart - datetime.datetime.now()).total_seconds()
+        logger.info(
+            "Wakeup will be before the start of the day. Will sleep for {} seconds".format(
+                sleepTime
+            )
+        )
+    else:
+        sleepTime = abs((startTime - datetime.datetime.now()).total_seconds())
+    logger.info(
+        "Wakeup will be during day time. Will only sleep for = {} seconds".format(
+            sleepTime
+        )
+    )
+    wakeupTime = datetime.datetime.now() + datetime.timedelta(
+        seconds=sleepTime + 5
+    )  # Add 5 seconds to account for function processing time
+    return sleepTime, wakeupTime
+
+
 def is_page_available(browser, logger):
     """ Check if the page is available and valid """
     expected_keywords = ["Page Not Found", "Content Unavailable"]
@@ -1852,13 +1893,44 @@ def is_page_available(browser, logger):
                     "The page isn't available!\t~the link may be broken, "
                     "or the page may have been removed..."
                 )
-                
-                is_page_available.errorCount += 1 # Increase counter if page load is blocked
-                sleepTime = (pow(2, is_page_available.errorCount) - 1) * 60 * 12
-                sleepTimeMins = round(sleepTime)
-                logger.info("{} consecutive page load errors. Sleeping for {} minutes.".format(is_page_available.errorCount, sleepTimeMins))
-                time.sleep(sleepTime) # Pause for ~12 minutes per consecutive error
-                is_page_available.errorThreshold = datetime.datetime.now() + datetime.timedelta(seconds=max(sleepTime, 30 * 60))
+                # Increase counter if page load is blocked
+                is_page_available.errorCount += 1
+                is_page_available.errorCount = min(
+                    is_page_available.errorCount, 4
+                )  # Max 4
+                sleepTime = round(
+                    min(
+                        (pow(2, is_page_available.errorCount) - 1)
+                        * 60
+                        * random.uniform(28, 32),
+                        random.uniform(59, 61) * 60 * 8,
+                    )
+                )
+                wakeupTime = datetime.datetime.now() + datetime.timedelta(
+                    seconds=sleepTime
+                )
+                sleepTime, wakeupTime = night_sleep(
+                    logger, sleepHour=21, startTime=wakeupTime
+                )
+
+                logger.info(
+                    "{} consecutive page load errors. Waking at {}.".format(
+                        is_page_available.errorCount, wakeupTime
+                    )
+                )
+                time.sleep(
+                    sleepTime
+                )  # Pause for specified time increasing with consecutive errors
+                is_page_available.errorThreshold = datetime.datetime.now() + datetime.timedelta(
+                    seconds=max(
+                        (0.83 * is_page_available.errorCount - 0.33) * 60 * 60, 30 * 60
+                    )
+                )
+                logger.info(
+                    "Woken up. Error threshold ends at {}".format(
+                        is_page_available.errorThreshold
+                    )
+                )
 
             elif "Content Unavailable" in page_title:
                 logger.warning(
@@ -1866,13 +1938,17 @@ def is_page_available(browser, logger):
                 )
 
             return False
-    if (is_page_available.errorThreshold < datetime.datetime.now()) or (is_page_available.errorCount > 5):
-        is_page_available.errorCount = 0 # Reset counter on successful page load after waiting period
+    if is_page_available.errorThreshold < datetime.datetime.now():
+        is_page_available.errorCount = (
+            0  # Reset counter on successful page load after waiting period
+        )
     return True
+
 
 # Initialise page load error counter to 0
 is_page_available.errorCount = 0
 is_page_available.errorThreshold = datetime.datetime.now()
+
 
 @contextmanager
 def smart_run(session, threaded=False):
