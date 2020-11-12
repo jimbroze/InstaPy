@@ -1867,10 +1867,10 @@ def night_sleep(logger, sleepHour, startTime=None):
         )
     else:
         sleepTime = abs((startTime - datetime.datetime.now()).total_seconds())
-    logger.info(
-        "Wakeup will be during day time. Will only sleep for = {} seconds".format(
-            sleepTime
-        )
+        logger.info(
+            "Wakeup will be during day time. Will only sleep for = {} seconds".format(
+                sleepTime
+            )
     )
     wakeupTime = datetime.datetime.now() + datetime.timedelta(
         seconds=sleepTime + 5
