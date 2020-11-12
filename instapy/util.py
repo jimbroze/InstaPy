@@ -1,45 +1,50 @@
 """ Common utilities """
+# import built-in & third-party modules
 import time
 import datetime
-from math import ceil
-from math import radians
-from math import degrees as rad2deg
-from math import cos
 import random
 import re
 import regex
 import signal
 import os
 import sys
+import csv
+import sqlite3
+import json
+import emoji
+
+from math import ceil
+from math import radians
+from math import cos
+from math import degrees as rad2deg
 from sys import exit as clean_exit
 from platform import system
 from platform import python_version
 from subprocess import call
-import csv
-import sqlite3
-import json
+from random import randint
 from contextlib import contextmanager
 from tempfile import gettempdir
-import emoji
-from emoji.unicode_codes import UNICODE_EMOJI
 from argparse import ArgumentParser
 
+from emoji.unicode_codes import UNICODE_EMOJI
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.common.by import By
 
+# import InstaPy modules
+from .xpath import read_xpath
+from .event import Event
+from .settings import Settings
 from .time_util import sleep
 from .time_util import sleep_actual
 from .database_engine import get_database
 from .quota_supervisor import quota_supervisor
-from .settings import Settings
 
+# import exceptions
 from selenium.common.exceptions import NoSuchElementException
 from selenium.common.exceptions import WebDriverException
 from selenium.common.exceptions import TimeoutException
 
-from .xpath import read_xpath
-from .event import Event
 
 default_profile_pic_instagram = [
     "https://instagram.flas1-2.fna.fbcdn.net/vp"
@@ -480,10 +485,10 @@ def update_activity(
     browser=None, action="server_calls", state=None, logfolder=None, logger=None
 ):
     """
-        1. Record every Instagram server call (page load, content load, likes,
-        comments, follows, unfollow)
-        2. Take rotative screenshots
-        3. update connection state and record to .json file
+    1. Record every Instagram server call (page load, content load, likes,
+    comments, follows, unfollow)
+    2. Take rotative screenshots
+    3. update connection state and record to .json file
     """
     # check action availability
     quota_supervisor("server_calls")
@@ -671,6 +676,8 @@ def get_active_users(browser, username, posts, boundary, logger):
 
     count = 1
     checked_posts = 0
+    user_list = []
+
     while count <= posts:
         # load next post
         try:
@@ -740,7 +747,6 @@ def get_active_users(browser, username, posts, boundary, logger):
             scroll_it = True
             try_again = 0
             start_time = time.time()
-            user_list = []
 
             if likers_count:
                 amount = (
@@ -949,6 +955,25 @@ def scroll_bottom(browser, element, range_int):
     return
 
 
+def scroll_down(browser, y: int = 50):
+    """
+    Scroll down the page by 50 pixels
+
+    This is intended mainly for accept_follow_requests(), since user could
+    have several request to be accepted. By default only 10 users are shown,
+    but InstaPy user could requested to accept more than 10.
+
+    :param y: number of pixels to be moved
+    """
+
+    browser.execute_script("window.scrollBy(0, {})".format(y))
+    # update server calls
+    update_activity(browser, state=None)
+    sleep(randint(1, 5))
+
+    return
+
+
 def click_element(browser, element, tryNum=0):
     """
     There are three (maybe more) different ways to "click" an element/button.
@@ -969,7 +994,7 @@ def click_element(browser, element, tryNum=0):
       exist, ...). on each attempt try and move the screen around in
       various ways. if all else fails, programmically click the button
       using `execute_script` in the browser.
-      """
+    """
 
     try:
         # use Selenium's built in click function
@@ -984,11 +1009,16 @@ def click_element(browser, element, tryNum=0):
 
         if tryNum == 0:
             # try scrolling the element into view
-            browser.execute_script(
-                "document.getElementsByClassName('"
-                + element.get_attribute("class")
-                + "')[0].scrollIntoView({ inline: 'center' });"
-            )
+            try:
+                # This tends to fail because the script fails to get the element class
+                if element.get_attribute("class") != "":
+                    browser.execute_script(
+                        "document.getElementsByClassName('"
+                        + element.get_attribute("class")
+                        + "')[0].scrollIntoView({ inline: 'center' });"
+                    )
+            except Exception:
+                pass
 
         elif tryNum == 1:
             # well, that didn't work, try scrolling to the top and then
@@ -1003,13 +1033,18 @@ def click_element(browser, element, tryNum=0):
         else:
             # try `execute_script` as a last resort
             # print("attempting last ditch effort for click, `execute_script`")
-            browser.execute_script(
-                "document.getElementsByClassName('"
-                + element.get_attribute("class")
-                + "')[0].click()"
-            )
-            # update server calls after last click attempt by JS
-            update_activity(browser, state=None)
+            try:
+                if element.get_attribute("class") != "":
+                    browser.execute_script(
+                        "document.getElementsByClassName('"
+                        + element.get_attribute("class")
+                        + "')[0].click()"
+                    )
+                    # update server calls after last click attempt by JS
+                    update_activity(browser, state=None)
+            except Exception:
+                print("Failed to click an element, giving up now")
+
             # end condition for the recursive function
             return
 
@@ -1239,10 +1274,12 @@ def interruption_handler(
     notify=None,
     logger=None,
 ):
-    """ Handles external interrupt, usually initiated by the user like
-    KeyboardInterrupt with CTRL+C """
+    """Handles external interrupt, usually initiated by the user like
+    KeyboardInterrupt with CTRL+C"""
     if notify is not None and logger is not None:
         logger.warning(notify)
+
+    original_handler = None
 
     if not threaded:
         original_handler = signal.signal(SIG_type, handler)
@@ -1264,6 +1301,8 @@ def highlight_print(
     # find the number of chars needed off the length of the logger message
     output_len = 28 + len(username) + 3 + len(message) if logger else len(message)
     show_logs = Settings.show_logs
+    upper_char = None
+    lower_char = None
 
     if priority in ["initialization", "end"]:
         # OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
@@ -1355,6 +1394,8 @@ def remove_duplicates(container, keep_order, logger):
 
 def dump_record_activity(profile_name, logger, logfolder):
     """ Dump the record activity data to a local human-readable JSON """
+
+    conn = None
 
     try:
         # get a DB and start a connection
@@ -1459,8 +1500,8 @@ def ping_server(host, logger):
 
 
 def emergency_exit(browser, username, logger):
-    """ Raise emergency if the is no connection to server OR if user is not
-    logged in """
+    """Raise emergency if the is no connection to server OR if user is not
+    logged in"""
     server_address = "instagram.com"
     connection_state = ping_server(server_address, logger)
     if connection_state is False:
@@ -1570,6 +1611,9 @@ def check_authorization(browser, username, method, logger, notify=True):
 
 def get_username(browser, track, logger):
     """ Get the username of a user from the loaded profile page """
+
+    query = None
+
     if track == "profile":
         query = "return window._sharedData.entry_data. \
                     ProfilePage[0].graphql.user.username"
@@ -1604,14 +1648,18 @@ def get_username(browser, track, logger):
 
 def find_user_id(browser, track, username, logger):
     """  Find the user ID from the loaded page """
+
+    query = None
+    meta_XP = None
+
+    logger.info(
+        "Attempting to find user ID: Track: {}, Username {}".format(track, username)
+    )
     if track in ["dialog", "profile"]:
         query = "return window.__additionalData[Object.keys(window.__additionalData)[0]].data.graphql.user.id"
 
     elif track == "post":
-        query = (
-            "return window._sharedData.entry_data.PostPage["
-            "0].graphql.shortcode_media.owner.id"
-        )
+        query = "return window._sharedData.entry_data.ProfilePage[0].graphql.user.id"
         meta_XP = read_xpath(find_user_id.__name__, "meta_XP")
 
     failure_message = "Failed to get the user ID of '{}' from {} page!".format(
@@ -1658,8 +1706,8 @@ def find_user_id(browser, track, username, logger):
 
 @contextmanager
 def new_tab(browser):
-    """ USE once a host tab must remain untouched and yet needs extra data-
-    get from guest tab """
+    """USE once a host tab must remain untouched and yet needs extra data-
+    get from guest tab"""
     try:
         # add a guest tab
         browser.execute_script("window.open()")
@@ -1695,6 +1743,9 @@ def explicit_wait(browser, track, ec_params, logger, timeout=35, notify=True):
         ec_params = [ec_params]
 
     # find condition according to the tracks
+    condition = None
+    ec_name = None
+
     if track == "VOEL":
         elem_address, find_method = ec_params
         ec_name = "visibility of element located"
@@ -2486,7 +2537,7 @@ def get_bounding_box(
 
 def take_rotative_screenshot(browser, logfolder):
     """
-        Make a sequence of screenshots, based on hour:min:secs
+    Make a sequence of screenshots, based on hour:min:secs
     """
     global next_screenshot
 
@@ -2503,14 +2554,27 @@ def take_rotative_screenshot(browser, logfolder):
     next_screenshot += 1
 
 
-def get_query_hash(browser, logger):
-    """ Load Instagram JS file and find query hash code """
+def get_query_hash(browser, logger, edge_followed_by):
+    """
+    Load Instagram JS file and find query hash code
+
+    :param browser: webdriver instance
+    :param logger: the logger instance
+    :param edge_followed_by: query hash flag, edge_followed_by or edge_follow
+    :return: query hash
+    """
     link = "https://www.instagram.com/static/bundles/es6/Consumer.js/1f67555edbd3.js"
     web_address_navigator(browser, link)
     page_source = browser.page_source
+    # There are two query hash, one for followers and following, ie:
+    # t="c76146de99bb02f6415203be841dd25a",n="d04b0a864b4b54837c0d870b0e77e076"
+    if edge_followed_by:
+        pattern_hash = '[a-z0-9]{32}(?=",n=")'  # Used to query: edge_followed_by
+    else:
+        pattern_hash = '[a-z0-9]{32}(?=",u=1)'  # Used to query: edge_follow
     # locate pattern value from JS file
     # sequence of 32 words and/or numbers just before ,n=" value
-    hash = re.findall('[a-z0-9]{32}(?=",n=")', page_source)
+    hash = re.findall(pattern_hash, page_source)
     if hash:
         return hash[0]
     else:
